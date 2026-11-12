@@ -163,6 +163,53 @@ The `validator` function receives two arguments:
 - `result`: The scrape result object for the current page.
 - `nextUrl`: The URL of the next page to scrape.
 
+### node.reusable([flag])
+
+Make a configured node safe to execute repeatedly. Off by default to preserve
+the original behavior exactly.
+
+A normal x-ray node keeps a single, mutable run context (pagination counter,
+accumulated pages, stream and JSON delimiters). Calling it a second time, or
+driving it through several exits, mixes state between runs. Calling
+`.reusable()` flips the node into reusable mode:
+
+- every execution — `node(cb)`, `node(source, cb)`, `.stream()`,
+  `.write(path)` and `.then()` — runs in its own isolated context, so
+  pagination counters, results, JSON delimiters and errors never bleed
+  between runs;
+- `node(source, cb)` overrides the source for that run only, leaving the
+  node's configured source untouched;
+- pagination config (`.paginate()`, `.limit()`, `.abort()`) is snapshotted
+  when each run starts, so changing it while a run is in flight only affects
+  subsequent runs; the getters always report the configured template value;
+- a failed request or parse fails just that run; every other run is
+  unaffected and the node can be executed again;
+- each run completes exactly once, and the `Promise` returned by `.then()`
+  keeps standard promise semantics (handlers attached to the same promise
+  share its single result);
+- selectors, filters, pagination abort, output format and the Xray
+  instance's concurrency/throttle settings are still shared.
+
+Pass `false` (`node.reusable(false)`) to switch the node back to its default
+behavior.
+
+```js
+var x = Xray()
+var node = x('http://example.com/posts', '.post', [
+  { title: 'h2', link: 'a@href' }
+])
+  .paginate('.next@href')
+  .limit(3)
+  .reusable()
+
+// each call is an independent crawl, even when interleaved
+node(function (err, posts) { /* ... */ })
+node('http://example.com/posts?page=2', function (err, posts) { /* ... */ })
+node.stream()                       // independent JSON stream
+node.write('posts.json')            // independent file stream
+node.then(function (posts) { /* ... */ })
+```
+
 ### xray.delay(from, [to])
 
 Delay the next request between `from` and `to` milliseconds.
